@@ -59,7 +59,11 @@ file > built-in defaults.
 session = "gary"                        # tmux session turdr owns
 db = "~/team/gary.db"                   # passed to gary as --db; omit for gary's default
 poll_interval = 3                       # seconds between polls (gary watch cadence)
-default_command = "gary watch {agent}"  # launch template for agents not listed below
+default_command = "gary watch {agent} {db}" # launch template for agents not listed
+                                        # below; {db} -> "--db <path>" when db is set.
+                                        # The built-in default also prints a banner
+                                        # first (gary watch is silent until a message
+                                        # arrives, so a bare pane looks dead).
 default_dir = "~"
 skip_unlisted = false                   # true -> ignore Gary agents with no entry below
 stuck_after = 120                       # state file older than this (s) -> stuck

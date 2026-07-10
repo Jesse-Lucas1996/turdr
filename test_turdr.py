@@ -178,6 +178,22 @@ class CommandConstructionTests(unittest.TestCase):
         self.assertEqual(turdr.launch_command(base_cfg(), agent),
                          "run a.b-c@1 --x")
 
+    def test_launch_command_db_placeholder(self):
+        agent = {"name": "a1", "command": "gary watch {agent} {db}",
+                 "dir": None, "state_file": None}
+        self.assertEqual(
+            turdr.launch_command(base_cfg(db="/tmp/my db.sqlite"), agent),
+            "gary watch a1 --db '/tmp/my db.sqlite'")
+        self.assertEqual(turdr.launch_command(base_cfg(), agent),
+                         "gary watch a1")
+
+    def test_default_command_banners_before_watching(self):
+        agent = {"name": "a1", "command": turdr.DEFAULTS["default_command"],
+                 "dir": None, "state_file": None}
+        cmd = turdr.launch_command(base_cfg(db="/tmp/g.db"), agent)
+        self.assertIn("printf", cmd)
+        self.assertIn("exec gary watch a1 --db /tmp/g.db", cmd)
+
     def test_scan_session_parses_tagged_panes(self):
         outputs = [
             completed("@1\tmain\tturdr\n@2\t\talpha\n@3\t\tname\twith\ttabs\n"),
@@ -242,7 +258,8 @@ state_file = "{self.tmp}/{{agent}}.busy"
         agents = {a["name"]: a for a in out["agents"]}
         self.assertEqual(agents["alpha"]["status"], "pending")
         self.assertEqual(agents["alpha"]["pending"], 1)
-        self.assertEqual(agents["alpha"]["command"], "gary watch alpha")
+        self.assertIn("gary watch alpha", agents["alpha"]["command"])
+        self.assertIn(self.db, agents["alpha"]["command"])
         self.assertEqual(agents["beta"]["status"], "working")
         self.assertEqual(agents["beta"]["command"], "echo beta")
         self.assertTrue(all(a["would_create_pane"] for a in out["agents"]))

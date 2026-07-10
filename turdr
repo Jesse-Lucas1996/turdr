@@ -34,7 +34,7 @@ import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 REPO_URL = os.environ.get("TURDR_REPO", "https://github.com/Jesse-Lucas1996/turdr")
 INSTALL_DIR = os.path.expanduser("~/.local/bin")
@@ -57,7 +57,11 @@ DEFAULTS = {
     "session": "gary",
     "db": None,                              # None -> gary's own default db
     "poll_interval": 3.0,                    # matches gary watch's cadence
-    "default_command": "gary watch {agent}", # launch template for unlisted agents
+    # Launch template for unlisted agents. The banner matters: `gary watch`
+    # prints nothing until a message arrives, and a silent pane reads as broken.
+    "default_command":
+        "printf '▶ %s — waiting for gary messages\\n' {agent}; "
+        "exec gary watch {agent} {db}",
     "default_dir": None,
     "skip_unlisted": False,                  # True -> only manage [agents.*] entries
     "stuck_after": 120,                      # state file older than this -> stuck
@@ -280,10 +284,15 @@ def tag_pane(pane_id, **options):
 
 
 def launch_command(cfg, agent):
-    """Shell command tmux runs for an agent. Agent names are pre-validated to
-    a shell-safe charset, so quoting is belt-and-braces; launch templates must
-    not add their own quotes around {agent}."""
-    return agent["command"].replace("{agent}", shlex.quote(agent["name"]))
+    """Shell command tmux runs for an agent. {agent} becomes the (validated,
+    shell-safe) agent name; {db} becomes `--db <path>` when a db is configured
+    and nothing otherwise, so default-launched agents watch the same db turdr
+    polls. Templates must not add their own quotes around the placeholders."""
+    db_arg = ""
+    if cfg["db"]:
+        db_arg = "--db " + shlex.quote(os.path.expanduser(cfg["db"]))
+    cmd = agent["command"].replace("{agent}", shlex.quote(agent["name"]))
+    return cmd.replace("{db}", db_arg).strip()
 
 
 def agent_dir(agent):
@@ -334,6 +343,14 @@ def respawn_pane(cfg, agent, pane_id):
 
 # --- layout -----------------------------------------------------------------
 
+def style_main_window(window_id):
+    """Pane titles above each pane, bold so they don't drown in the dim
+    border color tmux uses by default. Idempotent, window-scoped."""
+    tmux("set-option", "-w", "-t", window_id, "pane-border-status", "top")
+    tmux("set-option", "-w", "-t", window_id, "pane-border-format",
+         " #[bold]#{pane_title}#[default] ")
+
+
 def effective_sidebar_width(cfg, window_width):
     """The list is a gutter, not the show: never wider than configured and
     never more than a third of the window, with a floor that keeps it usable."""
@@ -374,7 +391,7 @@ def ensure_layout(cfg, config_path):
             main = tmux("display-message", "-p", "-t", pane_id,
                         "#{window_id}").stdout.strip()
             tmux("set-option", "-w", "-t", main, "@turdr_window", "main")
-            tmux("set-option", "-w", "-t", main, "pane-border-status", "top")
+            style_main_window(main)
             tag_pane(pane_id, role="sidebar")
             tmux("select-pane", "-T", "turdr", "-t", pane_id)
         elif scan_session(session) is None:
@@ -388,6 +405,8 @@ def ensure_layout(cfg, config_path):
         tmux("set-option", "-t", session, "mouse", "on")
 
     main = scan["main_window"]
+    if main is not None:
+        style_main_window(main)
     width = str(effective_sidebar_width(cfg, window_width(main or session)))
     if main is None:
         pane_id = tmux("new-window", "-d", "-P", "-F", "#{pane_id}",
@@ -397,7 +416,7 @@ def ensure_layout(cfg, config_path):
                     "#{window_id}").stdout.strip()
         tmux("set-option", "-w", "-t", main, "@turdr_window", "main")
         tag_pane(pane_id, role="sidebar")
-        tmux("set-option", "-w", "-t", main, "pane-border-status", "top")
+        style_main_window(main)
         scan = scan_session(session)
 
     if scan["sidebar"] is None:
@@ -679,7 +698,8 @@ def _sidebar_loop(scr, cfg, poller, tmux_lock):
         top = max(0, min(top, sel), sel - rows + 1)
 
         scr.erase()
-        _put(scr, 0, 0, f" turdr · {len(agents)}", width, curses.A_BOLD)
+        _put(scr, 0, 0, f" turdr · {len(agents)}", width,
+             curses.color_pair(1) | curses.A_BOLD)
         term_pane = scan["agent_panes"].get(TERM_NAME) if scan else None
         for i, entry in enumerate(entries[top:top + rows]):
             name = entry["name"]
@@ -820,7 +840,7 @@ def cmd_status(cfg, as_json):
             "pending": pending,
             "pane": pane["id"] if pane else None,
             "would_create_pane": pane is None,
-            "command": agent["command"].replace("{agent}", agent["name"]),
+            "command": launch_command(cfg, agent),
             "dir": agent["dir"],
         })
     if as_json:

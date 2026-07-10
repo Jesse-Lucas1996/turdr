@@ -3,7 +3,11 @@
 session = "gary"                       # tmux session turdr owns
 # db = "~/Work/shared/gary.db"         # passed to gary as --db; omit for gary's default
 poll_interval = 3                      # seconds between gary polls
-default_command = "gary watch {agent}" # launch template for agents with no [agents.*] entry
+# Launch template for agents with no [agents.*] entry. {agent} -> agent name,
+# {db} -> "--db <path>" when db is set above (empty otherwise). The built-in
+# default prints a banner, then execs `gary watch {agent} {db}` — gary watch
+# is silent until a message arrives, so the banner proves the pane is alive.
+# default_command = "gary watch {agent} {db}"
 # default_dir = "~"                    # working dir for default-launched agents
 skip_unlisted = false                  # true -> ignore Gary agents not listed below
 stuck_after = 120                      # state file older than this (s) shows as stuck
