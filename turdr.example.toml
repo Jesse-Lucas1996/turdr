@@ -1,0 +1,24 @@
+# turdr config — everything is optional; a missing file means pure defaults.
+
+session = "gary"                       # tmux session turdr owns
+# db = "~/Work/shared/gary.db"         # passed to gary as --db; omit for gary's default
+poll_interval = 3                      # seconds between gary polls
+default_command = "gary watch {agent}" # launch template for agents with no [agents.*] entry
+# default_dir = "~"                    # working dir for default-launched agents
+skip_unlisted = false                  # true -> ignore Gary agents not listed below
+stuck_after = 120                      # state file older than this (s) shows as stuck
+sidebar_width = 34                     # columns for the left agent list
+mouse = true                           # tmux mouse for this session (click list & panes)
+sender = "turdr"                       # --from name used by `turdr send` / the composer
+auto_respawn = false                   # respawn exited agents (bounded, with backoff)
+
+# Per-agent overrides. {agent} in command/state_file becomes the agent name.
+# Don't put your own quotes around {agent}; turdr quotes it for you.
+[agents.builder]
+command = "./scripts/agent-loop.sh {agent}"
+dir = "~/Work/myproject"
+state_file = "/tmp/agents/{agent}.busy"   # optional: enables working/stuck states
+
+[agents.reviewer]
+command = "gary watch reviewer"
+dir = "~/Work/myproject"
