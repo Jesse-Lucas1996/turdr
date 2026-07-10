@@ -498,6 +498,24 @@ def ensure_agent_panes(cfg, agents):
     return created
 
 
+def current_tmux_session():
+    if not os.environ.get("TMUX"):
+        return None
+    proc = tmux("display-message", "-p", "#{session_name}", check=False)
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def restart_session(cfg):
+    current = current_tmux_session()
+    if current == cfg["session"]:
+        raise TurdrError(
+            f"cannot restart session {cfg['session']} from inside itself — "
+            "run `turdr restart` from another shell")
+    tmux("kill-session", "-t", f"={cfg['session']}", check=False)
+
+
 def show_agent(cfg, agent, focus=False):
     """Bring an agent into view by moving the sidebar pane into the agent's
     window (join-pane keeps the sidebar process alive) and switching there.
@@ -836,12 +854,14 @@ def _put(scr, y, x, text, width, attr=curses.A_NORMAL):
 
 # --- commands -----------------------------------------------------------------
 
-def cmd_run(cfg, config_path):
+def cmd_run(cfg, config_path, restart=False):
     if not shutil.which("tmux"):
         raise TurdrError("tmux not found on PATH")
     if not shutil.which("gary"):
         raise TurdrError("gary not found on PATH — install gary first")
     roster(cfg)  # fail fast on gary/db problems before touching tmux
+    if restart:
+        restart_session(cfg)
     scan = ensure_layout(cfg, config_path)
     # Agent windows are created by the sidebar's poller only (single writer):
     # a second creator here would race it and duplicate windows.
@@ -885,6 +905,10 @@ def cmd_status(cfg, as_json):
               f"pane={pane}  cmd: {r['command']}{where}")
     if not report:
         print("  (no managed agents — is anything registered in gary?)")
+
+
+def cmd_restart(cfg, config_path):
+    cmd_run(cfg, config_path, restart=True)
 
 
 def cmd_send(cfg, name, message):
@@ -969,7 +993,7 @@ def _git(workdir, *args):
 
 # --- main ---------------------------------------------------------------------
 
-COMMANDS = {"run", "status", "send", "update", "version", "sidebar"}
+COMMANDS = {"run", "restart", "status", "send", "update", "version", "sidebar"}
 
 
 def build_parser():
@@ -985,6 +1009,8 @@ def build_parser():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("run", parents=[common],
                    help="launch/attach the fleet session (default command)")
+    sub.add_parser("restart", parents=[common],
+                   help="kill and recreate the fleet tmux session")
     p = sub.add_parser("status", parents=[common],
                        help="read-only roster + status report; mutates nothing")
     p.add_argument("--json", action="store_true", help="machine-readable output")
@@ -1028,6 +1054,8 @@ def main(argv=None):
             cfg, config_path = resolve_config(args)
             if args.cmd == "run":
                 cmd_run(cfg, config_path)
+            elif args.cmd == "restart":
+                cmd_restart(cfg, config_path)
             elif args.cmd == "status":
                 cmd_status(cfg, args.json)
             elif args.cmd == "send":

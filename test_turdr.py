@@ -304,6 +304,27 @@ class CommandConstructionTests(unittest.TestCase):
             self.assertIsNone(turdr.scan_session("gone"))
 
 
+class RestartTests(unittest.TestCase):
+    def test_restart_session_kills_target(self):
+        cfg = base_cfg(session="gary")
+        with mock.patch.object(turdr, "current_tmux_session", return_value=None), \
+                mock.patch.object(turdr, "tmux") as tmux_mock:
+            turdr.restart_session(cfg)
+        tmux_mock.assert_called_once_with("kill-session", "-t", "=gary", check=False)
+
+    def test_restart_session_refuses_inside_same_session(self):
+        cfg = base_cfg(session="gary")
+        with mock.patch.object(turdr, "current_tmux_session", return_value="gary"):
+            with self.assertRaisesRegex(turdr.TurdrError, "from inside itself"):
+                turdr.restart_session(cfg)
+
+    def test_cmd_restart_delegates_to_cmd_run_with_restart(self):
+        cfg = base_cfg()
+        with mock.patch.object(turdr, "cmd_run") as cmd_run:
+            turdr.cmd_restart(cfg, "/tmp/turdr.toml")
+        cmd_run.assert_called_once_with(cfg, "/tmp/turdr.toml", restart=True)
+
+
 @unittest.skipUnless(HAVE_GARY, "gary not on PATH")
 class CliIntegrationTests(unittest.TestCase):
     def setUp(self):

@@ -40,6 +40,7 @@ reachable with plain tmux: `prefix + n/p/0-9`).
 ```sh
 turdr                        # launch/attach; ./turdr.toml, else ~/.config/turdr/turdr.toml
 turdr run -c fleet.toml      # explicit config ("run" is the default command)
+turdr restart                # kill the managed tmux session and rebuild it cleanly
 turdr --db ~/team/gary.db    # point at any Gary db, zero per-agent config
 turdr status [--json]        # read-only roster + status report; mutates nothing
 turdr send <agent> [words…]  # gary send (body from args or stdin)
@@ -130,6 +131,9 @@ counter.
   turdr never kills anything it didn't create.
 - Re-running `turdr` is idempotent: session, sidebar, and windows are reused. Quitting
   the sidebar leaves all agents running.
+- `turdr restart` is the explicit escape hatch when you do want a full reset of the
+  managed tmux session. Run it from outside that session; it refuses to kill the tmux
+  session it is currently running inside.
 
 ## Install / update
 
