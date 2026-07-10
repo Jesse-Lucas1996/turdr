@@ -187,28 +187,29 @@ class CommandConstructionTests(unittest.TestCase):
         self.assertEqual(turdr.launch_command(base_cfg(), agent),
                          "gary watch a1")
 
-    def test_default_command_banners_before_watching(self):
+    def test_default_command_is_a_terminal_in_the_agent(self):
         agent = {"name": "a1", "command": turdr.DEFAULTS["default_command"],
                  "dir": None, "state_file": None}
-        cmd = turdr.launch_command(base_cfg(db="/tmp/g.db"), agent)
-        self.assertIn("printf", cmd)
-        self.assertIn("exec gary watch a1 --db /tmp/g.db", cmd)
+        cmd = turdr.launch_command(base_cfg(), agent)
+        self.assertIn("agent a1", cmd)                # banner names the agent
+        self.assertIn('exec "${SHELL:-sh}"', cmd)     # ... then a real shell
 
     def test_scan_session_parses_tagged_panes(self):
         outputs = [
-            completed("@1\tmain\tturdr\n@2\t\talpha\n@3\t\tname\twith\ttabs\n"),
+            completed("@1\talpha\n@2\tbeta\n@3\tname\twith\ttabs\n"),
             completed("%0\t@1\t0\tsidebar\t\n"
                       "%1\t@1\t0\t\talpha\n"
                       "%2\t@2\t1\t\tbeta\n"
-                      "%3\t@3\t0\tplaceholder\t\n"),
+                      "%3\t@1\t0\tshell\talpha\n"
+                      "%4\t@3\t0\tplaceholder\t\n"),
         ]
         with mock.patch.object(turdr, "run_process", side_effect=outputs):
             scan = turdr.scan_session("gary")
-        self.assertEqual(scan["main_window"], "@1")
         self.assertEqual(scan["sidebar"]["id"], "%0")
-        self.assertEqual(scan["shown"]["agent"], "alpha")
+        self.assertEqual(scan["shown"]["agent"], "alpha")  # sidebar's window
         self.assertTrue(scan["agent_panes"]["beta"]["dead"])
-        self.assertEqual(scan["placeholder"]["id"], "%3")
+        self.assertEqual(scan["shells"]["alpha"]["id"], "%3")
+        self.assertEqual([p["id"] for p in scan["stale"]], ["%4"])
         self.assertEqual(scan["windows"]["@3"]["name"], "name\twith\ttabs")
 
     def test_scan_session_missing_session(self):
@@ -258,8 +259,7 @@ state_file = "{self.tmp}/{{agent}}.busy"
         agents = {a["name"]: a for a in out["agents"]}
         self.assertEqual(agents["alpha"]["status"], "pending")
         self.assertEqual(agents["alpha"]["pending"], 1)
-        self.assertIn("gary watch alpha", agents["alpha"]["command"])
-        self.assertIn(self.db, agents["alpha"]["command"])
+        self.assertIn('exec "${SHELL:-sh}"', agents["alpha"]["command"])
         self.assertEqual(agents["beta"]["status"], "working")
         self.assertEqual(agents["beta"]["command"], "echo beta")
         self.assertTrue(all(a["would_create_pane"] for a in out["agents"]))
@@ -378,13 +378,14 @@ default_command = "gary watch {{agent}} --db {self.db}"
             time.sleep(0.3)
         self.fail(message)
 
+    def sidebar(self):
+        return next(p for p in self.panes() if p[2] == "sidebar")
+
     def test_bootstrap_select_and_idempotency(self):
         self.run_turdr()
-        roles = {p[2] for p in self.panes()}
-        self.assertIn("sidebar", roles)
-        self.assertIn("placeholder", roles)
+        self.assertIn("sidebar", {p[2] for p in self.panes()})
 
-        # Agent panes are created by the sidebar's poller (single writer).
+        # Agent windows are created by the sidebar's poller (single writer).
         def all_windows():
             windows = self.tmux("list-windows", "-t", "gary",
                                 "-F", "#{window_name}").stdout.split()
@@ -397,32 +398,32 @@ default_command = "gary watch {{agent}} --db {self.db}"
         self.run_turdr()  # idempotent: same panes, no duplicates
         self.assertEqual(sorted(p[0] for p in self.panes()), before)
 
-        # Select an agent in the sidebar: its live pane swaps into the main
-        # window and the placeholder is retired.
-        sidebar = next(p for p in self.panes() if p[2] == "sidebar")
+        # Selecting an agent hops the sidebar pane into that agent's window.
         time.sleep(2)  # let the sidebar's first poll land
-        self.tmux("send-keys", "-t", sidebar[0], "Down", "Enter")
-        deadline = time.time() + 5
-        while time.time() < deadline:
+        self.tmux("send-keys", "-t", self.sidebar()[0], "Down", "Enter")
+
+        def sidebar_in_agent_window():
             panes = self.panes()
-            shown = [p for p in panes
-                     if p[1] == sidebar[1] and p[3] in ("alpha", "beta")]
-            if shown and not any(p[2] == "placeholder" for p in panes):
-                break
-            time.sleep(0.3)
-        else:
-            self.fail(f"agent pane never swapped into main window: {panes}")
+            side = next(p for p in panes if p[2] == "sidebar")
+            return any(p[1] == side[1] and p[3] in ("alpha", "beta")
+                       for p in panes if p[2] == "")
+        self.wait_for(sidebar_in_agent_window,
+                      "sidebar never hopped into an agent window")
 
-        before = sorted(p[0] for p in self.panes())
-        self.run_turdr()  # still idempotent after a selection
-        self.assertEqual(sorted(p[0] for p in self.panes()), before)
+        agent_panes = sorted(p[0] for p in self.panes() if p[3])
+        self.run_turdr()  # still idempotent: agent panes untouched
+        self.assertEqual(sorted(p[0] for p in self.panes() if p[3]),
+                         agent_panes)
 
-        # 't' swaps the built-in scratch terminal into the main window.
-        self.tmux("send-keys", "-t", sidebar[0], "t")
-        self.wait_for(
-            lambda: any(p[1] == sidebar[1] and p[3] == ":term"
-                        for p in self.panes()),
-            "scratch terminal never appeared in the main window")
+        # 't' opens a shell pane inside the shown agent's window.
+        self.tmux("send-keys", "-t", self.sidebar()[0], "t")
+
+        def shell_in_agent_window():
+            panes = self.panes()
+            side = next(p for p in panes if p[2] == "sidebar")
+            return any(p[1] == side[1] and p[2] == "shell" for p in panes)
+        self.wait_for(shell_in_agent_window,
+                      "agent shell pane never appeared")
 
 
 if __name__ == "__main__":

@@ -1,31 +1,35 @@
 # turdr
 
 A status-aware tmux controller for [Gary](https://github.com/Jesse-Lucas1996/gary)-managed
-agent fleets — herdr's UX without reimplementing tmux. One tmux session: a persistent
-sidebar on the left listing every agent with a live status dot, and the selected agent's
-live pane on the right. Click or press Enter to bring an agent into view, then type
-straight into its pane to steer it, or fire a Gary message at it without leaving the list.
+agent fleets — herdr's UX without reimplementing tmux. Every agent owns a whole tmux
+window: an interactive terminal session in the agent's working directory, running the
+agent CLI you configure (or a plain shell where you start the agent yourself). A slim
+sidebar lists the fleet with live status dots and *hops* into whichever agent's window
+you select — you talk to an agent by typing into its session, like any terminal.
+
+Gary is **cross-agent communication only**: it supplies the roster (`gary list`) and the
+pending/idle signal (`gary inbox`, peek-only); turdr never runs your agents through it.
 
 Single Python-stdlib script. Requires Python ≥ 3.11, tmux ≥ 3.0, and `gary` on PATH.
-Gary's registry is the only roster — turdr never invents its own — and turdr only ever
-shells out to `gary` and `tmux` (argument arrays, peek-only inbox polling, no sqlite
-access of its own).
+turdr only ever shells out to `gary` and `tmux` (argument arrays, no sqlite access of
+its own).
 
 ```
-window "turdr" (main)                 parking windows (hidden panes)
-+--------+-------------------------+  +----------------+
-|○ alpha |                         |  |  beta's pane,  |
-|● beta 2|   alpha's live pane     |  |  still running |
-|▸● gamma|   (type here to steer   |  +----------------+
-|$ termin|    the agent)           |
+window "api" (selected)               window "cases" (another agent)
++--------+-------------------------+  +--------------------------+
+|▸○ api  |  agent session — its    |  |  cases' session, still   |
+| ● cases|  repo & CLI; type here  |  |  running untouched       |
+| ○ edge |  to steer the agent     |  +--------------------------+
+| ...    +-------------------------+
+|        |  extra shell pane (t)   |
 +--------+-------------------------+
 ```
 
-The sidebar is a slim gutter: at most `sidebar_width` columns (default 24) and never
-more than a third of the window, holding its size across terminal resizes; rows adapt
-to whatever width remains (the dot color always carries the status). The last entry,
-`$ terminal`, is a plain shell in the right slot — press `t` (or select it) whenever
-you want a normal terminal instead of an agent.
+Agent windows are normal tmux windows — split them however you like; turdr only tracks
+the tagged agent pane and never rearranges your splits. The sidebar is a gutter: at most
+`sidebar_width` columns (default 24), never more than a third of the window, holding its
+size across resizes; rows adapt to whatever width remains (the dot color always carries
+the status).
 
 Selecting an agent **swaps** its live pane into the main window — the agent's process is
 never restarted by selection. Hidden agents keep running in parking windows (also
@@ -44,11 +48,13 @@ turdr version
 ```
 
 Sidebar keys: `↑/↓` (or `j/k`) move · `Enter` show agent (Enter again moves your
-keyboard into its pane) · `Tab`/`→` show **and** focus · `t` scratch terminal · `m`
-compose a Gary message to the selected agent · `r` poll now · `q` quit (agents keep running; rerun `turdr` to get
-the sidebar back). Mouse: click an agent to show it; click a pane to focus it (turdr
-turns `mouse on` for its own session only — set `mouse = false` to opt out). Get back
-to the sidebar with `prefix + ←` or by clicking it.
+keyboard into its session) · `Tab`/`→` show **and** focus · `t` open/focus a shell pane
+inside the selected agent's window, in its directory · `m` send a Gary message to the
+selected agent (cross-comms, same channel agents use with each other) · `r` poll now ·
+`q` quit (agents keep running; rerun `turdr` to get the sidebar back). Mouse: click an
+agent to show it; click a pane to focus it (turdr turns `mouse on` for its own session
+only — set `mouse = false` to opt out). Get back to the sidebar with `prefix + ←` or by
+clicking it.
 
 ## Config
 
@@ -59,11 +65,11 @@ file > built-in defaults.
 session = "gary"                        # tmux session turdr owns
 db = "~/team/gary.db"                   # passed to gary as --db; omit for gary's default
 poll_interval = 3                       # seconds between polls (gary watch cadence)
-default_command = "gary watch {agent} {db}" # launch template for agents not listed
-                                        # below; {db} -> "--db <path>" when db is set.
-                                        # The built-in default also prints a banner
-                                        # first (gary watch is silent until a message
-                                        # arrives, so a bare pane looks dead).
+default_command = "claude"              # launch template for agents not listed below;
+                                        # {agent} -> name, {db} -> "--db <path>" when
+                                        # db is set. Built-in default: a banner + an
+                                        # interactive shell in the agent's dir, so you
+                                        # can start the agent yourself.
 default_dir = "~"
 skip_unlisted = false                   # true -> ignore Gary agents with no entry below
 stuck_after = 120                       # state file older than this (s) -> stuck
@@ -109,15 +115,17 @@ counter.
   not registered in Gary are ignored.
 - Every turdr-owned pane is tagged with tmux user options (`@turdr_agent`,
   `@turdr_role`), so a restarted turdr rediscovers everything — no state file.
-- Only the sidebar's poller creates agent panes (single writer — two cooperating
-  creators would race and duplicate windows). New Gary registrations get a pane within
-  one poll; agents each get a detached parking window, created without stealing focus.
+- Only the sidebar's poller creates agent windows (single writer — two cooperating
+  creators would race and duplicate windows). New Gary registrations get a window
+  within one poll, created detached without stealing focus.
+- Selecting an agent moves the sidebar pane into that agent's window (`join-pane` — the
+  sidebar process survives the move) and switches there. Nothing about the agent's
+  window is restarted or rearranged by selection.
 - Single-pane windows named after a roster agent (e.g. from an older turdr) are adopted
   by tagging, not duplicated. Multi-pane or unrelated windows are never touched, and
-  turdr never kills anything it didn't create (the only pane it ever kills is its own
-  placeholder).
-- Re-running `turdr` is idempotent: session, sidebar, and panes are reused. Quitting the
-  sidebar leaves all agents running.
+  turdr never kills anything it didn't create.
+- Re-running `turdr` is idempotent: session, sidebar, and windows are reused. Quitting
+  the sidebar leaves all agents running.
 
 ## Install / update
 

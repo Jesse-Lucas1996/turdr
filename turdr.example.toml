@@ -5,9 +5,9 @@ session = "gary"                       # tmux session turdr owns
 poll_interval = 3                      # seconds between gary polls
 # Launch template for agents with no [agents.*] entry. {agent} -> agent name,
 # {db} -> "--db <path>" when db is set above (empty otherwise). The built-in
-# default prints a banner, then execs `gary watch {agent} {db}` — gary watch
-# is silent until a message arrives, so the banner proves the pane is alive.
-# default_command = "gary watch {agent} {db}"
+# default gives you an interactive shell in the agent's dir (banner first),
+# so you can start the agent CLI yourself. Set this to launch it directly:
+# default_command = "claude"
 # default_dir = "~"                    # working dir for default-launched agents
 skip_unlisted = false                  # true -> ignore Gary agents not listed below
 stuck_after = 120                      # state file older than this (s) shows as stuck
@@ -20,10 +20,10 @@ auto_respawn = false                   # respawn exited agents (bounded, with ba
 # Per-agent overrides. {agent} in command/state_file becomes the agent name.
 # Don't put your own quotes around {agent}; turdr quotes it for you.
 [agents.builder]
-command = "./scripts/agent-loop.sh {agent}"
-dir = "~/Work/myproject"
+command = "claude"                        # the agent's interactive session
+dir = "~/Work/myproject"                  # ... in its own repo
 state_file = "/tmp/agents/{agent}.busy"   # optional: enables working/stuck states
 
 [agents.reviewer]
-command = "gary watch reviewer"
-dir = "~/Work/myproject"
+command = "./scripts/agent-loop.sh {agent}"
+dir = "~/Work/otherproject"
