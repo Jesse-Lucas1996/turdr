@@ -40,7 +40,7 @@ import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 REPO_URL = os.environ.get("TURDR_REPO", "https://github.com/Jesse-Lucas1996/turdr")
 INSTALL_DIR = os.path.expanduser("~/.local/bin")
