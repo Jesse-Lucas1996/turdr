@@ -70,6 +70,56 @@ DEFAULTS = {
     "auto_respawn": False,                   # respawn exited agents with backoff
 }
 
+DEFAULT_USER_CONFIG = """# turdr global config
+# Auto-created on first run. Local ./turdr.toml overrides this file.
+
+session = \"gary\"
+poll_interval = 3
+default_command = \"codex --dangerously-bypass-approvals-and-sandbox\"
+default_dir = \"~\"
+skip_unlisted = false
+stuck_after = 120
+sidebar_width = 24
+mouse = true
+sender = \"turdr\"
+auto_respawn = false
+
+# Add per-agent repo mappings so each agent starts in its own project.
+# [agents.api]
+# dir = \"~/Work/api\"
+# command = \"codex --dangerously-bypass-approvals-and-sandbox\"
+"""
+
+
+def user_config_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "turdr", "turdr.toml")
+
+
+def ensure_user_config(path=None):
+    path = path or user_config_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "x", encoding="utf-8") as f:
+            f.write(DEFAULT_USER_CONFIG)
+    except FileExistsError:
+        return path
+    except OSError as e:
+        raise TurdrError(f"cannot create default config {path}: {e}")
+    return path
+
+
+def discover_config_path(explicit_path=None):
+    if explicit_path is not None:
+        return explicit_path
+    local_path = "turdr.toml"
+    if os.path.exists(local_path):
+        return local_path
+    global_path = user_config_path()
+    if os.path.exists(global_path):
+        return global_path
+    return ensure_user_config(global_path)
+
 class TurdrError(Exception):
     pass
 
@@ -925,7 +975,7 @@ COMMANDS = {"run", "status", "send", "update", "version", "sidebar"}
 def build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-c", "--config",
-                        help="TOML config (default: ./turdr.toml if present)")
+                        help="TOML config (default: ./turdr.toml, else ~/.config/turdr/turdr.toml; auto-created on first run)")
     common.add_argument("--db", help="gary db path (overrides config)")
     common.add_argument("--session", help="tmux session name (overrides config)")
 
@@ -951,9 +1001,7 @@ def build_parser():
 
 
 def resolve_config(args):
-    config_path = getattr(args, "config", None)
-    if config_path is None and os.path.exists("turdr.toml"):
-        config_path = "turdr.toml"
+    config_path = discover_config_path(getattr(args, "config", None))
     cfg = load_config(config_path)
     if getattr(args, "db", None):
         cfg["db"] = args.db

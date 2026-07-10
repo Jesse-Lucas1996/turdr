@@ -21,6 +21,7 @@ import tempfile
 import time
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TURDR = os.path.join(HERE, "turdr")
@@ -85,6 +86,91 @@ class ConfigTests(unittest.TestCase):
     def test_nonexistent_file_is_an_error(self):
         with self.assertRaisesRegex(turdr.TurdrError, "not found"):
             turdr.load_config("/nonexistent/turdr.toml")
+
+    def test_resolve_config_uses_global_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_home = os.path.join(tmp, "config-home")
+            os.makedirs(os.path.join(cfg_home, "turdr"))
+            global_cfg = os.path.join(cfg_home, "turdr", "turdr.toml")
+            with open(global_cfg, "w") as f:
+                f.write('session = "fleet"\n')
+
+            cwd = os.path.join(tmp, "work")
+            os.makedirs(cwd)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(cwd)
+                with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": cfg_home}, clear=False):
+                    cfg, path = turdr.resolve_config(SimpleNamespace(
+                        config=None, db=None, session=None))
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(path, global_cfg)
+        self.assertEqual(cfg["session"], "fleet")
+
+    def test_resolve_config_bootstraps_global_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_home = os.path.join(tmp, "config-home")
+            cwd = os.path.join(tmp, "work")
+            os.makedirs(cwd)
+
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(cwd)
+                with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": cfg_home}, clear=False):
+                    cfg, path = turdr.resolve_config(SimpleNamespace(
+                        config=None, db=None, session=None))
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertEqual(path, os.path.join(cfg_home, "turdr", "turdr.toml"))
+            self.assertTrue(os.path.exists(path))
+            self.assertEqual(
+                cfg["default_command"],
+                "codex --dangerously-bypass-approvals-and-sandbox")
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertIn(
+                    'default_command = "codex --dangerously-bypass-approvals-and-sandbox"',
+                    f.read())
+
+    def test_resolve_config_prefers_local_over_global(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_home = os.path.join(tmp, "config-home")
+            os.makedirs(os.path.join(cfg_home, "turdr"))
+            global_cfg = os.path.join(cfg_home, "turdr", "turdr.toml")
+            with open(global_cfg, "w") as f:
+                f.write('session = "global"\n')
+
+            cwd = os.path.join(tmp, "work")
+            os.makedirs(cwd)
+            local_cfg = os.path.join(cwd, "turdr.toml")
+            with open(local_cfg, "w") as f:
+                f.write('session = "local"\n')
+
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(cwd)
+                with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": cfg_home}, clear=False):
+                    cfg, path = turdr.resolve_config(SimpleNamespace(
+                        config=None, db=None, session=None))
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(path, "turdr.toml")
+        self.assertEqual(cfg["session"], "local")
+
+    def test_resolve_config_explicit_path_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            explicit_cfg = os.path.join(tmp, "explicit.toml")
+            with open(explicit_cfg, "w") as f:
+                f.write('session = "explicit"\n')
+
+            cfg, path = turdr.resolve_config(SimpleNamespace(
+                config=explicit_cfg, db=None, session=None))
+
+        self.assertEqual(path, explicit_cfg)
+        self.assertEqual(cfg["session"], "explicit")
 
 
 class RosterTests(unittest.TestCase):

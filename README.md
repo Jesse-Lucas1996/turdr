@@ -4,7 +4,7 @@ A status-aware tmux controller for [Gary](https://github.com/Jesse-Lucas1996/gar
 agent fleets — herdr's UX without reimplementing tmux. Every agent owns a whole tmux
 window: an interactive terminal session in the agent's working directory, running the
 agent CLI you configure (or a plain shell where you start the agent yourself). A slim
-sidebar lists the fleet with live status dots and *hops* into whichever agent's window
+sidebar lists the fleet with live status dots and _hops_ into whichever agent's window
 you select — you talk to an agent by typing into its session, like any terminal.
 
 Gary is **cross-agent communication only**: it supplies the roster (`gary list`) and the
@@ -38,7 +38,7 @@ reachable with plain tmux: `prefix + n/p/0-9`).
 ## Usage
 
 ```sh
-turdr                        # launch/attach; ./turdr.toml if present, else defaults
+turdr                        # launch/attach; ./turdr.toml, else ~/.config/turdr/turdr.toml
 turdr run -c fleet.toml      # explicit config ("run" is the default command)
 turdr --db ~/team/gary.db    # point at any Gary db, zero per-agent config
 turdr status [--json]        # read-only roster + status report; mutates nothing
@@ -59,17 +59,18 @@ clicking it.
 ## Config
 
 TOML, everything optional (see `turdr.example.toml`). Precedence: CLI flags > config
-file > built-in defaults.
+file > local `./turdr.toml` > global `~/.config/turdr/turdr.toml` > built-in defaults.
+If neither config file exists, turdr creates `~/.config/turdr/turdr.toml` on first run.
 
 ```toml
 session = "gary"                        # tmux session turdr owns
 db = "~/team/gary.db"                   # passed to gary as --db; omit for gary's default
 poll_interval = 3                       # seconds between polls (gary watch cadence)
-default_command = "claude"              # launch template for agents not listed below;
+default_command = "codex --dangerously-bypass-approvals-and-sandbox"
+                                        # launch template for agents not listed below;
                                         # {agent} -> name, {db} -> "--db <path>" when
-                                        # db is set. Built-in default: a banner + an
-                                        # interactive shell in the agent's dir, so you
-                                        # can start the agent yourself.
+                                        # db is set. This example starts Codex with
+                                        # approvals and sandbox bypassed.
 default_dir = "~"
 skip_unlisted = false                   # true -> ignore Gary agents with no entry below
 stuck_after = 120                       # state file older than this (s) -> stuck
@@ -90,13 +91,13 @@ state_file = "/tmp/agents/{agent}.busy" # optional; enables working/stuck states
 Polled every `poll_interval` seconds via `gary inbox <name> --json` (peek only — never
 dequeues) plus one tmux pane scan; per-agent inbox checks run concurrently.
 
-| dot | status | meaning |
-|-----|--------|---------|
-| ○ white | `idle` | inbox empty |
-| ● yellow | `pending` | inbox has messages waiting (count shown) |
-| ● green | `working` | agent's `state_file` exists |
-| ● red | `stuck` | `state_file` exists but is older than `stuck_after` |
-| ✗ magenta | `exited` | the agent's pane process has died (last output stays visible) |
+| dot       | status    | meaning                                                       |
+| --------- | --------- | ------------------------------------------------------------- |
+| ○ white   | `idle`    | inbox empty                                                   |
+| ● yellow  | `pending` | inbox has messages waiting (count shown)                      |
+| ● green   | `working` | agent's `state_file` exists                                   |
+| ● red     | `stuck`   | `state_file` exists but is older than `stuck_after`           |
+| ✗ magenta | `exited`  | the agent's pane process has died (last output stays visible) |
 
 `working`/`stuck` exist only for agents whose config sets `state_file` — the convention
 is that the launch command touches that file while processing a message and removes it
@@ -119,8 +120,11 @@ counter.
   creators would race and duplicate windows). New Gary registrations get a window
   within one poll, created detached without stealing focus.
 - Selecting an agent moves the sidebar pane into that agent's window (`join-pane` — the
-  sidebar process survives the move) and switches there. Nothing about the agent's
-  window is restarted or rearranged by selection.
+  sidebar process survives the move) and switches there. If that agent window already
+  exists, you are looking at the same live session; nothing about the agent's window is
+  restarted or rearranged by selection.
+- `t` opens or refocuses one extra shell pane inside the selected agent window, in that
+  agent's configured directory.
 - Single-pane windows named after a roster agent (e.g. from an older turdr) are adopted
   by tagging, not duplicated. Multi-pane or unrelated windows are never touched, and
   turdr never kills anything it didn't create.

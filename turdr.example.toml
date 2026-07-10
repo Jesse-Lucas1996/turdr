@@ -1,4 +1,6 @@
-# turdr config — everything is optional; a missing file means pure defaults.
+# turdr config — everything is optional; place this at ./turdr.toml for a
+# repo-local override, or at ~/.config/turdr/turdr.toml for your global defaults.
+# If neither exists, turdr bootstraps ~/.config/turdr/turdr.toml on first run.
 
 session = "gary"                       # tmux session turdr owns
 # db = "~/Work/shared/gary.db"         # passed to gary as --db; omit for gary's default
@@ -7,7 +9,7 @@ poll_interval = 3                      # seconds between gary polls
 # {db} -> "--db <path>" when db is set above (empty otherwise). The built-in
 # default gives you an interactive shell in the agent's dir (banner first),
 # so you can start the agent CLI yourself. Set this to launch it directly:
-# default_command = "claude"
+# default_command = "codex --dangerously-bypass-approvals-and-sandbox"
 # default_dir = "~"                    # working dir for default-launched agents
 skip_unlisted = false                  # true -> ignore Gary agents not listed below
 stuck_after = 120                      # state file older than this (s) shows as stuck
@@ -20,7 +22,7 @@ auto_respawn = false                   # respawn exited agents (bounded, with ba
 # Per-agent overrides. {agent} in command/state_file becomes the agent name.
 # Don't put your own quotes around {agent}; turdr quotes it for you.
 [agents.builder]
-command = "claude"                        # the agent's interactive session
+command = "codex --dangerously-bypass-approvals-and-sandbox"
 dir = "~/Work/myproject"                  # ... in its own repo
 state_file = "/tmp/agents/{agent}.busy"   # optional: enables working/stuck states
 
