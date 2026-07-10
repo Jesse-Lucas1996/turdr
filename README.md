@@ -12,14 +12,20 @@ shells out to `gary` and `tmux` (argument arrays, peek-only inbox polling, no sq
 access of its own).
 
 ```
-window "turdr" (main)              parking windows (hidden agents)
-+-----------+--------------------+  +----------------+
-| ○ alpha   |                    |  |  beta's pane,  |
-| ● beta (2)|  alpha's live pane |  |  still running |
-| ● gamma ▸ |  (type here to     |  +----------------+
-|           |   steer the agent) |
-+-----------+--------------------+
+window "turdr" (main)                 parking windows (hidden panes)
++--------+-------------------------+  +----------------+
+|○ alpha |                         |  |  beta's pane,  |
+|● beta 2|   alpha's live pane     |  |  still running |
+|▸● gamma|   (type here to steer   |  +----------------+
+|$ termin|    the agent)           |
++--------+-------------------------+
 ```
+
+The sidebar is a slim gutter: at most `sidebar_width` columns (default 24) and never
+more than a third of the window, holding its size across terminal resizes; rows adapt
+to whatever width remains (the dot color always carries the status). The last entry,
+`$ terminal`, is a plain shell in the right slot — press `t` (or select it) whenever
+you want a normal terminal instead of an agent.
 
 Selecting an agent **swaps** its live pane into the main window — the agent's process is
 never restarted by selection. Hidden agents keep running in parking windows (also
@@ -38,8 +44,8 @@ turdr version
 ```
 
 Sidebar keys: `↑/↓` (or `j/k`) move · `Enter` show agent (Enter again moves your
-keyboard into its pane) · `Tab`/`→` show **and** focus · `m` compose a Gary message to
-the selected agent · `r` poll now · `q` quit (agents keep running; rerun `turdr` to get
+keyboard into its pane) · `Tab`/`→` show **and** focus · `t` scratch terminal · `m`
+compose a Gary message to the selected agent · `r` poll now · `q` quit (agents keep running; rerun `turdr` to get
 the sidebar back). Mouse: click an agent to show it; click a pane to focus it (turdr
 turns `mouse on` for its own session only — set `mouse = false` to opt out). Get back
 to the sidebar with `prefix + ←` or by clicking it.
@@ -57,7 +63,7 @@ default_command = "gary watch {agent}"  # launch template for agents not listed 
 default_dir = "~"
 skip_unlisted = false                   # true -> ignore Gary agents with no entry below
 stuck_after = 120                       # state file older than this (s) -> stuck
-sidebar_width = 34
+sidebar_width = 24                      # max columns; also capped at 1/3 of window
 mouse = true
 sender = "turdr"                        # --from identity for send/composer (excluded
                                         # from the managed roster)

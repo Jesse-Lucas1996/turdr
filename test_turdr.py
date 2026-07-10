@@ -146,6 +146,31 @@ class StatusTests(unittest.TestCase):
             turdr.effective_status("pending", {"dead": False}), "pending")
 
 
+class SidebarLayoutTests(unittest.TestCase):
+    def test_format_row_wide_keeps_status_and_count(self):
+        row = turdr.format_row("builder", "pending", 2, 30)
+        self.assertIn("builder pending (2)", row)
+        self.assertEqual(len(row), 25)
+
+    def test_format_row_narrow_drops_status_then_parens(self):
+        self.assertIn("builder (2)", turdr.format_row("builder", "pending", 2, 20))
+        row = turdr.format_row("a-very-long-agent-name", "pending", 2, 16)
+        self.assertNotIn("pending", row)
+        self.assertTrue(row.rstrip().endswith("2"))
+        self.assertEqual(len(row), 11)
+
+    def test_format_row_tiny_still_shows_name_prefix(self):
+        row = turdr.format_row("builder", "working", 0, 10)
+        self.assertTrue(row.startswith("build"))
+
+    def test_effective_sidebar_width_clamps(self):
+        cfg = base_cfg()
+        self.assertEqual(turdr.effective_sidebar_width(cfg, 300), 24)
+        self.assertEqual(turdr.effective_sidebar_width(cfg, 60), 20)
+        self.assertEqual(turdr.effective_sidebar_width(cfg, 30), 12)
+        self.assertEqual(turdr.effective_sidebar_width(cfg, 0), 24)
+
+
 class CommandConstructionTests(unittest.TestCase):
     def test_launch_command_substitutes_and_quotes(self):
         agent = {"name": "a.b-c@1", "command": "run {agent} --x", "dir": None,
@@ -354,6 +379,13 @@ default_command = "gary watch {{agent}} --db {self.db}"
         before = sorted(p[0] for p in self.panes())
         self.run_turdr()  # still idempotent after a selection
         self.assertEqual(sorted(p[0] for p in self.panes()), before)
+
+        # 't' swaps the built-in scratch terminal into the main window.
+        self.tmux("send-keys", "-t", sidebar[0], "t")
+        self.wait_for(
+            lambda: any(p[1] == sidebar[1] and p[3] == ":term"
+                        for p in self.panes()),
+            "scratch terminal never appeared in the main window")
 
 
 if __name__ == "__main__":

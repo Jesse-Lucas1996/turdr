@@ -34,7 +34,7 @@ import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 REPO_URL = os.environ.get("TURDR_REPO", "https://github.com/Jesse-Lucas1996/turdr")
 INSTALL_DIR = os.path.expanduser("~/.local/bin")
@@ -42,6 +42,9 @@ CACHE_DIR = os.path.expanduser("~/.local/share/turdr")
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
 MAIN_WINDOW = "turdr"
+# Sentinel agent name for the built-in scratch terminal; the leading ':' can
+# never appear in a real Gary agent name (see NAME_RE), so no collisions.
+TERM_NAME = ":term"
 CMD_TIMEOUT = 15
 MAX_AUTO_RESPAWNS = 5
 
@@ -58,7 +61,7 @@ DEFAULTS = {
     "default_dir": None,
     "skip_unlisted": False,                  # True -> only manage [agents.*] entries
     "stuck_after": 120,                      # state file older than this -> stuck
-    "sidebar_width": 34,
+    "sidebar_width": 24,   # upper bound; also clamped to 1/3 of the window
     "mouse": True,                           # enable tmux mouse for our session only
     "sender": "turdr",                       # --from used by `turdr send` / the composer
     "auto_respawn": False,                   # respawn exited agents with backoff
@@ -214,6 +217,15 @@ def effective_status(status, pane):
     return "exited" if pane is None or pane["dead"] else status
 
 
+def terminal_agent(cfg):
+    """The built-in scratch terminal: a plain shell pane managed like an
+    agent (swap/respawn) but never part of Gary's roster or status polling."""
+    return {"name": TERM_NAME, "description": "scratch terminal",
+            "command": os.environ.get("SHELL", "sh"),
+            "dir": cfg["default_dir"] or os.path.expanduser("~"),
+            "state_file": None}
+
+
 # --- tmux primitives --------------------------------------------------------
 
 def tmux(*args, check=True):
@@ -282,14 +294,15 @@ def create_agent_pane(cfg, agent):
     """New parking window for an agent, detached (never steals focus).
     remain-on-exit keeps the pane (and its last output) visible if the agent
     crashes, so 'exited' is observable and respawn-in-place is possible."""
+    title = "term" if agent["name"] == TERM_NAME else agent["name"]
     args = ["new-window", "-d", "-P", "-F", "#{pane_id}",
-            "-t", f"={cfg['session']}:", "-n", agent["name"]]
+            "-t", f"={cfg['session']}:", "-n", title]
     if agent_dir(agent):
         args += ["-c", agent_dir(agent)]
     pane_id = tmux(*args, launch_command(cfg, agent)).stdout.strip()
     tag_pane(pane_id, agent=agent["name"])
     tmux("set-option", "-p", "-t", pane_id, "remain-on-exit", "on")
-    tmux("select-pane", "-T", agent["name"], "-t", pane_id)
+    tmux("select-pane", "-T", title, "-t", pane_id)
     return pane_id
 
 
@@ -300,11 +313,15 @@ def adopt_untagged_window(cfg, scan, agent):
     for wid, win in scan["windows"].items():
         if win["name"] != agent["name"] or win["role"] or wid == scan["main_window"]:
             continue
-        panes = tmux("list-panes", "-t", wid, "-F", "#{pane_id}").stdout.split()
+        panes = tmux("list-panes", "-t", wid, "-F",
+                     "#{pane_id}\t#{@turdr_agent}\t#{@turdr_role}").stdout.splitlines()
         if len(panes) == 1:
-            tag_pane(panes[0], agent=agent["name"])
-            tmux("set-option", "-p", "-t", panes[0], "remain-on-exit", "on")
-            return panes[0]
+            pane_id, tag_agent, tag_role = panes[0].split("\t", 2)
+            if tag_agent or tag_role:
+                continue  # already ours under another identity — never re-tag
+            tag_pane(pane_id, agent=agent["name"])
+            tmux("set-option", "-p", "-t", pane_id, "remain-on-exit", "on")
+            return pane_id
     return None
 
 
@@ -316,6 +333,20 @@ def respawn_pane(cfg, agent, pane_id):
 
 
 # --- layout -----------------------------------------------------------------
+
+def effective_sidebar_width(cfg, window_width):
+    """The list is a gutter, not the show: never wider than configured and
+    never more than a third of the window, with a floor that keeps it usable."""
+    if window_width <= 0:
+        return int(cfg["sidebar_width"])
+    return max(12, min(int(cfg["sidebar_width"]), window_width // 3))
+
+
+def window_width(target):
+    out = tmux("display-message", "-p", "-t", target,
+               "#{window_width}", check=False).stdout.strip()
+    return int(out) if out.isdigit() else 0
+
 
 def sidebar_command(cfg, config_path):
     argv = [sys.executable, os.path.abspath(__file__), "sidebar",
@@ -333,7 +364,6 @@ def ensure_layout(cfg, config_path):
     it didn't create."""
     session = cfg["session"]
     side_cmd = sidebar_command(cfg, config_path)
-    width = str(int(cfg["sidebar_width"]))
 
     scan = scan_session(session)
     if scan is None:
@@ -358,6 +388,7 @@ def ensure_layout(cfg, config_path):
         tmux("set-option", "-t", session, "mouse", "on")
 
     main = scan["main_window"]
+    width = str(effective_sidebar_width(cfg, window_width(main or session)))
     if main is None:
         pane_id = tmux("new-window", "-d", "-P", "-F", "#{pane_id}",
                        "-t", f"={session}:", "-n", MAIN_WINDOW,
@@ -430,8 +461,9 @@ def show_agent(cfg, agent, focus=False):
         if outgoing is None:
             tmux("join-pane", "-h", "-d", "-s", pane["id"],
                  "-t", scan["sidebar"]["id"])
-            tmux("resize-pane", "-t", scan["sidebar"]["id"],
-                 "-x", str(int(cfg["sidebar_width"])))
+            tmux("resize-pane", "-t", scan["sidebar"]["id"], "-x",
+                 str(effective_sidebar_width(
+                     cfg, window_width(scan["main_window"]))))
         else:
             old_window = pane["window"]
             tmux("swap-pane", "-d", "-s", pane["id"], "-t", outgoing["id"])
@@ -559,6 +591,30 @@ def sidebar(cfg):
         poller.stop()
 
 
+def format_row(name, status, pending, width):
+    """Row text after the dot column, adapted to the sidebar width: the name
+    always survives, the status word goes first when space runs out (the dot
+    color still carries it), then the pending count loses its parentheses."""
+    avail = max(4, width - 5)
+    count = f" ({pending})" if pending else ""
+    stat = f" {status}" if status and width >= 26 else ""
+    if len(name) + len(stat) + len(count) > avail:
+        stat = ""
+    if len(name) + len(count) > avail and pending:
+        count = f" {pending}"
+    if len(name) + len(count) > avail:
+        name = name[:max(2, avail - len(count))]
+    return f"{name}{stat}{count}"[:avail].ljust(avail)
+
+
+def footer_hint(width):
+    if width >= 46:
+        return "⏎ show · ⇥ type · t term · m msg · r poll · q quit"
+    if width >= 24:
+        return "⏎ show ⇥ type m msg q quit"
+    return "⏎ ⇥ t m q"
+
+
 def _sidebar_loop(scr, cfg, poller, tmux_lock):
     curses.curs_set(0)
     curses.use_default_colors()
@@ -572,53 +628,80 @@ def _sidebar_loop(scr, cfg, poller, tmux_lock):
         pass
     scr.timeout(100)
 
+    term = terminal_agent(cfg)
+    own_pane = os.environ.get("TMUX_PANE")
     sel, top = 0, 0
     flash = ("", 0.0)
+    last_win_w = 0
+    next_width_check = 0.0
 
     def set_flash(text, seconds=4):
         nonlocal flash
         flash = (text, time.monotonic() + seconds)
 
-    def select_agent(agent, focus):
+    def select_entry(entry, focus):
         with tmux_lock:
-            show_agent(cfg, agent, focus=focus)
-        poller.reset_respawns(agent["name"])
+            show_agent(cfg, entry, focus=focus)
+        poller.reset_respawns(entry["name"])
         poller.poke()
 
+    def enforce_width():
+        """Keep the sidebar at its fixed width when the *window* resizes
+        (tmux rescales panes proportionally), while respecting manual pane
+        drags — those change pane width without changing window width."""
+        nonlocal last_win_w, next_width_check
+        if own_pane is None or time.monotonic() < next_width_check:
+            return
+        next_width_check = time.monotonic() + 2
+        with tmux_lock:
+            win_w = window_width(own_pane)
+        if not win_w or win_w == last_win_w:
+            return
+        last_win_w = win_w
+        target = effective_sidebar_width(cfg, win_w)
+        if scr.getmaxyx()[1] != target:
+            with tmux_lock:
+                tmux("resize-pane", "-t", own_pane, "-x", str(target),
+                     check=False)
+
     while True:
+        enforce_width()
         snap = poller.snapshot()
         agents = snap["agents"]
         statuses = snap["statuses"]
         scan = snap["scan"]
         shown_name = scan["shown"]["agent"] if scan and scan["shown"] else None
-        sel = max(0, min(sel, len(agents) - 1)) if agents else 0
+        entries = agents + [term]
+        sel = max(0, min(sel, len(entries) - 1))
 
         height, width = scr.getmaxyx()
-        rows = max(1, height - 3)
+        rows = max(1, height - 2)
         top = max(0, min(top, sel), sel - rows + 1)
 
         scr.erase()
-        _put(scr, 0, 0, f" turdr · {cfg['session']} · {len(agents)} agents",
-             width, curses.A_BOLD)
-        for i, agent in enumerate(agents[top:top + rows]):
-            name = agent["name"]
-            status, pending = statuses.get(name, ("idle", 0))
-            marker = "▸ " if name == shown_name else "  "
-            note = f" ({pending})" if pending else ""
-            hint = poller.respawn_hint(name) if status == "exited" else ""
+        _put(scr, 0, 0, f" turdr · {len(agents)}", width, curses.A_BOLD)
+        term_pane = scan["agent_panes"].get(TERM_NAME) if scan else None
+        for i, entry in enumerate(entries[top:top + rows]):
+            name = entry["name"]
+            if name == TERM_NAME:
+                dead = term_pane is not None and term_pane["dead"]
+                dot, pair = ("✗", 5) if dead else ("$", 1)
+                label, status, pending = "terminal", "", 0
+            else:
+                status, pending = statuses.get(name, ("idle", 0))
+                dot, pair = DOTS[status], PAIRS[status]
+                label = name
+            marker = "▸" if name == shown_name else " "
             attr = curses.A_REVERSE if top + i == sel else curses.A_NORMAL
-            _put(scr, i + 1, 0, f"{marker}{DOTS[status]} ", width,
-                 curses.color_pair(PAIRS[status]))
-            line = f"{name:<16.16s} {status}{note}"
-            if hint:
-                line += f"  {hint}"
-            _put(scr, i + 1, 4, line, width, attr)
+            _put(scr, i + 1, 0, f"{marker}{dot} ", width, curses.color_pair(pair))
+            _put(scr, i + 1, 3, format_row(label, status, pending, width), width,
+                 attr)
         if not agents:
-            _put(scr, 2, 2, "no agents registered in gary", width, curses.A_DIM)
+            _put(scr, 1, 2, "no gary agents", width, curses.A_DIM)
 
         text, until = flash
-        footer = (text if time.monotonic() < until else "") or snap["error"] or \
-            "⏎ show · ⇥ type · m msg · r poll · q quit"
+        footer = (text if time.monotonic() < until else "") or snap["error"] \
+            or footer_hint(width)
         attr = curses.color_pair(4) if snap["error"] and not text else curses.A_DIM
         _put(scr, height - 1, 0, f" {footer}", width, attr)
         scr.refresh()
@@ -636,14 +719,18 @@ def _sidebar_loop(scr, cfg, poller, tmux_lock):
                 sel += 1
             elif ch == ord("r"):
                 poller.poke()
-            elif ch in (curses.KEY_ENTER, 10, 13) and agents:
-                # Enter shows; Enter on the already-shown agent moves the
-                # keyboard into its pane so you can talk to it directly.
-                select_agent(agents[sel], focus=agents[sel]["name"] == shown_name)
-            elif ch in (ord("\t"), curses.KEY_RIGHT, ord("l")) and agents:
-                select_agent(agents[sel], focus=True)
-            elif ch == ord("m") and agents:
-                _compose(scr, cfg, agents[sel], set_flash)
+            elif ch == ord("t"):
+                sel = len(entries) - 1
+                select_entry(term, focus=True)
+            elif ch in (curses.KEY_ENTER, 10, 13):
+                # Enter shows; Enter on the already-shown entry (and the
+                # terminal always) moves the keyboard into the pane.
+                entry = entries[sel]
+                select_entry(entry, focus=entry["name"] in (shown_name, TERM_NAME))
+            elif ch in (ord("\t"), curses.KEY_RIGHT, ord("l")):
+                select_entry(entries[sel], focus=True)
+            elif ch == ord("m") and agents and entries[sel]["name"] != TERM_NAME:
+                _compose(scr, cfg, entries[sel], set_flash)
                 poller.poke()
             elif ch == curses.KEY_MOUSE:
                 try:
@@ -651,9 +738,10 @@ def _sidebar_loop(scr, cfg, poller, tmux_lock):
                 except curses.error:
                     continue
                 row = my - 1
-                if 0 <= row < min(rows, len(agents) - top):
+                if 0 <= row < min(rows, len(entries) - top):
                     sel = top + row
-                    select_agent(agents[sel], focus=False)
+                    entry = entries[sel]
+                    select_entry(entry, focus=entry["name"] == TERM_NAME)
         except TurdrError as e:
             set_flash(str(e), 6)
 

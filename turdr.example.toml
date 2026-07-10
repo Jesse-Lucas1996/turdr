@@ -7,7 +7,8 @@ default_command = "gary watch {agent}" # launch template for agents with no [age
 # default_dir = "~"                    # working dir for default-launched agents
 skip_unlisted = false                  # true -> ignore Gary agents not listed below
 stuck_after = 120                      # state file older than this (s) shows as stuck
-sidebar_width = 34                     # columns for the left agent list
+sidebar_width = 24                     # max columns for the left list (also
+                                       # capped at 1/3 of the window width)
 mouse = true                           # tmux mouse for this session (click list & panes)
 sender = "turdr"                       # --from name used by `turdr send` / the composer
 auto_respawn = false                   # respawn exited agents (bounded, with backoff)
