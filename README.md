@@ -49,13 +49,13 @@ turdr version
 ```
 
 Sidebar keys: `↑/↓` (or `j/k`) move · `Enter` show agent (Enter again moves your
-keyboard into its session) · `Tab`/`→` show **and** focus · `t` open/focus a shell pane
-inside the selected agent's window, in its directory · `m` send a Gary message to the
-selected agent (cross-comms, same channel agents use with each other) · `r` poll now ·
-`q` quit (agents keep running; rerun `turdr` to get the sidebar back). Mouse: click an
-agent to show it; click a pane to focus it (turdr turns `mouse on` for its own session
-only — set `mouse = false` to opt out). Get back to the sidebar with `prefix + ←` or by
-clicking it.
+keyboard into its session) · `Tab`/`→` show **and** focus · `t` or `Alt+t` open/focus a
+shell pane inside the selected agent's window, in its directory · `m` send a Gary
+message to the selected agent (cross-comms, same channel agents use with each other) ·
+`r` poll now · `q` quit (agents keep running; rerun `turdr` to get the sidebar back).
+Mouse: click an agent to show it; click a pane to focus it (turdr turns `mouse on` for
+its own session only — set `mouse = false` to opt out). Get back to the sidebar with
+`prefix + ←` or by clicking it.
 
 ## Config
 
@@ -104,6 +104,10 @@ dequeues) plus one tmux pane scan; per-agent inbox checks run concurrently.
 is that the launch command touches that file while processing a message and removes it
 when done. Without one, turdr shows only `idle`/`pending`/`exited`; it never fabricates
 a state it can't observe.
+
+For CLI-driven agents, stdout can override the sidebar state text. If an agent prints
+`turdr-status: running` or `turdr-status: done`, turdr picks up the most recent marker
+from that pane and shows `running` or `done` on the left.
 
 Exited agents: `Enter` respawns the pane in place (same window, output history intact).
 With `auto_respawn = true`, turdr respawns automatically with exponential backoff, giving

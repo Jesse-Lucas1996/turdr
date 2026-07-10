@@ -231,12 +231,33 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(
             turdr.effective_status("pending", {"dead": False}), "pending")
 
+    def test_effective_status_prefers_stdout_marker(self):
+        self.assertEqual(
+            turdr.effective_status("idle", {"dead": True}, "done"), "done")
+        self.assertEqual(
+            turdr.effective_status("pending", {"dead": False}, "running"),
+            "running")
+
+    def test_pane_stdout_status_uses_latest_marker(self):
+        with mock.patch.object(
+                turdr, "tmux",
+                return_value=completed("hello\nturdr-status: running\nwork\nturdr-status=done\n")):
+            self.assertEqual(turdr.pane_stdout_status("%1"), "done")
+
+    def test_pane_stdout_status_ignores_missing_marker(self):
+        with mock.patch.object(turdr, "tmux", return_value=completed("hello\nworld\n")):
+            self.assertIsNone(turdr.pane_stdout_status("%1"))
+
 
 class SidebarLayoutTests(unittest.TestCase):
     def test_format_row_wide_keeps_status_and_count(self):
         row = turdr.format_row("builder", "pending", 2, 30)
         self.assertIn("builder pending (2)", row)
         self.assertEqual(len(row), 25)
+
+    def test_format_row_default_sidebar_width_shows_status(self):
+        row = turdr.format_row("api", "running", 0, 24)
+        self.assertIn("api running", row)
 
     def test_format_row_narrow_drops_status_then_parens(self):
         self.assertIn("builder (2)", turdr.format_row("builder", "pending", 2, 20))
@@ -255,6 +276,17 @@ class SidebarLayoutTests(unittest.TestCase):
         self.assertEqual(turdr.effective_sidebar_width(cfg, 60), 20)
         self.assertEqual(turdr.effective_sidebar_width(cfg, 30), 12)
         self.assertEqual(turdr.effective_sidebar_width(cfg, 0), 24)
+
+    def test_is_alt_key_matches_alt_t(self):
+        class FakeScreen:
+            def __init__(self, values):
+                self.values = list(values)
+
+            def getch(self):
+                return self.values.pop(0) if self.values else -1
+
+        self.assertTrue(turdr.is_alt_key(FakeScreen([ord("t")]), 27, ord("t")))
+        self.assertFalse(turdr.is_alt_key(FakeScreen([-1]), 27, ord("t")))
 
 
 class CommandConstructionTests(unittest.TestCase):

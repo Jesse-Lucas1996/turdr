@@ -40,13 +40,15 @@ import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
-__version__ = "2.0.2"
+__version__ = "2.0.3"
 
 REPO_URL = os.environ.get("TURDR_REPO", "https://github.com/Jesse-Lucas1996/turdr")
 INSTALL_DIR = os.path.expanduser("~/.local/bin")
 CACHE_DIR = os.path.expanduser("~/.local/share/turdr")
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+STDOUT_STATUS_RE = re.compile(
+    r"(?:turdr[-_ ]status)\s*[:=]\s*(running|done)\b", re.IGNORECASE)
 SIDEBAR_WINDOW = "turdr"
 CMD_TIMEOUT = 15
 MAX_AUTO_RESPAWNS = 5
@@ -265,8 +267,23 @@ def agent_status(cfg, agent):
     return ("pending" if pending else "idle", pending)
 
 
-def effective_status(status, pane):
-    """A dead or missing pane trumps whatever Gary says the agent is doing."""
+def pane_stdout_status(pane_id):
+    proc = tmux("capture-pane", "-p", "-t", pane_id, "-S", "-200", check=False)
+    if proc.returncode != 0:
+        return None
+    status = None
+    for line in proc.stdout.splitlines():
+        match = STDOUT_STATUS_RE.search(line)
+        if match:
+            status = match.group(1).lower()
+    return status
+
+
+def effective_status(status, pane, stdout_status=None):
+    """Pane stdout status markers override the inferred state; otherwise a
+    dead or missing pane trumps whatever Gary says the agent is doing."""
+    if stdout_status in ("running", "done"):
+        return stdout_status
     return "exited" if pane is None or pane["dead"] else status
 
 
@@ -610,7 +627,8 @@ class Poller(threading.Thread):
                 with self._lock:
                     self._snap["error"] = f"{name}: {e}"
             pane = scan["agent_panes"].get(name)
-            statuses[name] = (effective_status(status, pane), pending)
+            stdout_status = pane_stdout_status(pane["id"]) if pane else None
+            statuses[name] = (effective_status(status, pane, stdout_status), pending)
 
         if self.cfg["auto_respawn"]:
             self._auto_respawn(agents, scan, statuses)
@@ -647,7 +665,16 @@ class Poller(threading.Thread):
 # --- sidebar UI ---------------------------------------------------------------
 
 DOTS = {"idle": "○", "pending": "●", "working": "●", "stuck": "●", "exited": "✗"}
-PAIRS = {"idle": 1, "pending": 2, "working": 3, "stuck": 4, "exited": 5}
+DOTS.update({"running": "▶", "done": "✓"})
+PAIRS = {"idle": 1, "pending": 2, "working": 3, "stuck": 4, "exited": 5,
+         "running": 3, "done": 1}
+
+
+def is_alt_key(scr, ch, key):
+    if ch != 27:
+        return False
+    next_ch = scr.getch()
+    return next_ch in (key, ord(chr(key).upper()))
 
 
 def sidebar(cfg):
@@ -666,7 +693,7 @@ def format_row(name, status, pending, width):
     color still carries it), then the pending count loses its parentheses."""
     avail = max(4, width - 5)
     count = f" ({pending})" if pending else ""
-    stat = f" {status}" if status and width >= 26 else ""
+    stat = f" {status}" if status and width >= 24 else ""
     if len(name) + len(stat) + len(count) > avail:
         stat = ""
     if len(name) + len(count) > avail and pending:
@@ -788,7 +815,7 @@ def _sidebar_loop(scr, cfg, poller, tmux_lock):
                 sel += 1
             elif ch == ord("r"):
                 poller.poke()
-            elif ch == ord("t") and entries:
+            elif (ch == ord("t") or is_alt_key(scr, ch, ord("t"))) and entries:
                 # A terminal inside the selected agent's window, in its dir.
                 open_shell(entries[sel])
             elif ch in (curses.KEY_ENTER, 10, 13) and entries:
