@@ -295,6 +295,26 @@ state_file = "{self.tmp}/{{agent}}.busy"
         out = self.turdr("version").stdout
         self.assertIn(turdr.__version__, out)
 
+    def test_update_without_upstream_installs_local_code(self):
+        home = os.path.join(self.tmp, "home")
+        checkout = os.path.join(home, "checkout")
+        os.makedirs(checkout)
+        shutil.copy2(TURDR, os.path.join(checkout, "turdr"))
+        env = dict(os.environ, HOME=home)
+        for cmd in (["git", "init", "-q"],
+                    ["git", "add", "turdr"],
+                    ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                     "commit", "-qm", "x"]):
+            subprocess.run(cmd, cwd=checkout, capture_output=True,
+                           text=True, env=env, check=True)
+        proc = subprocess.run(
+            [os.path.join(checkout, "turdr"), "update"],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("no upstream remote", proc.stderr)
+        installed = os.path.join(home, ".local/bin/turdr")
+        self.assertTrue(os.access(installed, os.X_OK), "not installed")
+
 
 @unittest.skipUnless(HAVE_GARY and HAVE_TMUX, "gary and tmux required")
 class TmuxEndToEndTests(unittest.TestCase):

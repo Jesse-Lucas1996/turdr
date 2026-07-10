@@ -34,7 +34,7 @@ import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 REPO_URL = os.environ.get("TURDR_REPO", "https://github.com/Jesse-Lucas1996/turdr")
 INSTALL_DIR = os.path.expanduser("~/.local/bin")
@@ -698,8 +698,9 @@ def _sidebar_loop(scr, cfg, poller, tmux_lock):
         top = max(0, min(top, sel), sel - rows + 1)
 
         scr.erase()
-        _put(scr, 0, 0, f" turdr · {len(agents)}", width,
-             curses.color_pair(1) | curses.A_BOLD)
+        header = (f" turdr {__version__} · {len(agents)}" if width >= 20
+                  else f" turdr · {len(agents)}")
+        _put(scr, 0, 0, header, width, curses.color_pair(1) | curses.A_BOLD)
         term_pane = scan["agent_panes"].get(TERM_NAME) if scan else None
         for i, entry in enumerate(entries[top:top + rows]):
             name = entry["name"]
@@ -874,7 +875,15 @@ def cmd_update():
     script = os.path.realpath(__file__)
     checkout = _git_toplevel(os.path.dirname(script))
     if checkout:
-        _git(checkout, "pull", "--ff-only")
+        if _git_has_upstream(checkout):
+            _git(checkout, "pull", "--ff-only")
+        else:
+            print(f"note: {checkout} has no upstream remote — installing the "
+                  "local code as-is.\n"
+                  "      to enable pulling updates:  "
+                  f"git -C {shlex.quote(checkout)} remote add origin "
+                  f"{REPO_URL} && git -C {shlex.quote(checkout)} push -u "
+                  "origin HEAD", file=sys.stderr)
         source = os.path.join(checkout, "turdr")
     else:
         if os.path.isdir(os.path.join(CACHE_DIR, ".git")):
@@ -905,6 +914,12 @@ def cmd_version():
         if proc.returncode == 0:
             line += f" ({proc.stdout.strip()})"
     print(line)
+
+
+def _git_has_upstream(workdir):
+    proc = run_process(["git", "-C", workdir, "rev-parse", "--abbrev-ref",
+                        "--symbolic-full-name", "@{u}"])
+    return proc.returncode == 0
 
 
 def _git_toplevel(path):
